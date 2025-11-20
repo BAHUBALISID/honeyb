@@ -1,11 +1,29 @@
 <?php
 // Functions for CATEYE Web Scanner - HoneyB Integrated Version
 
+// Ensure we have the color variables
+if (!isset($cln)) {
+    $cln = "\e[0m";
+    $bold = "\e[1m";
+    $red = "\e[91m";
+    $green = "\e[92m";
+    $yellow = "\e[93m";
+    $blue = "\e[94m";
+    $magenta = "\e[95m";
+    $cyan = "\e[96m";
+    $white = "\e[97m";
+    $fgreen = "\e[92m";
+    $lblue = "\e[94m";
+}
+
 function getTitle($url) {
     global $cln;
     $data = readcontents($url);
+    if (!$data) {
+        return $cln . "Could not retrieve title";
+    }
     $title = preg_match('/<title[^>]*>(.*?)<\/title>/ims', $data, $matches) ? $matches[1] : null;
-    return $title ?: $cln . "Could not retrieve title";
+    return $title ?: "Could not retrieve title";
 }
 
 function userinput($message) {
@@ -23,11 +41,20 @@ function WEBserver($url) {
         ],
     ]);
     
-    $wsheaders = get_headers($url, 1);
-    if (is_array($wsheaders['Server'])) {
-        $ws = $wsheaders['Server'][0];
+    $wsheaders = @get_headers($url, 1);
+    if (!$wsheaders) {
+        echo $bold . $red . "Could Not Detect" . $cln;
+        return;
+    }
+    
+    if (is_array($wsheaders) && isset($wsheaders['Server'])) {
+        if (is_array($wsheaders['Server'])) {
+            $ws = $wsheaders['Server'][0];
+        } else {
+            $ws = $wsheaders['Server'];
+        }
     } else {
-        $ws = $wsheaders['Server'];
+        $ws = "";
     }
     
     if ($ws == "") {
@@ -40,13 +67,15 @@ function WEBserver($url) {
 function cloudflaredetect($domain) {
     global $bold, $fgreen, $red, $cln;
     
-    $ns = dns_get_record($domain, DNS_NS);
+    $ns = @dns_get_record($domain, DNS_NS);
     $cf = false;
     
-    foreach($ns as $n) {
-        if (strpos($n['target'], 'cloudflare') !== false) {
-            $cf = true;
-            break;
+    if ($ns) {
+        foreach($ns as $n) {
+            if (strpos($n['target'], 'cloudflare') !== false) {
+                $cf = true;
+                break;
+            }
         }
     }
     
@@ -86,7 +115,6 @@ function CMSdetect($reallink) {
 }
 
 function advanced_CMSdetect($reallink) {
-    global $cln;
     $cmssc = readcontents($reallink);
     $cms_signatures = [
         'WordPress' => ['/wp-content/', 'content="WordPress', 'wp-includes/', 'wp-json/'],
@@ -123,17 +151,10 @@ function robotsdottxt($reallink) {
     global $bold, $fgreen, $red, $blue, $cln;
     
     $rbturl = $reallink . "/robots.txt";
-    $rbthandle = curl_init($rbturl);
-    curl_setopt($rbthandle, CURLOPT_SSL_VERIFYPEER, false);
-    curl_setopt($rbthandle, CURLOPT_RETURNTRANSFER, TRUE);
-    curl_setopt($rbthandle, CURLOPT_TIMEOUT, 10);
-    $rbtresponse = curl_exec($rbthandle);
-    $rbthttpCode = curl_getinfo($rbthandle, CURLINFO_HTTP_CODE);
-    curl_close($rbthandle);
+    $rbtcontent = readcontents($rbturl);
     
-    if ($rbthttpCode == 200) {
-        $rbtcontent = readcontents($rbturl);
-        if ($rbtcontent == "") {
+    if ($rbtcontent && !strpos($rbtcontent, '404')) {
+        if (trim($rbtcontent) == "") {
             echo $bold . $red . "Found But Empty!" . $cln;
         } else {
             echo $bold . $fgreen . "Found" . $cln . "\n";
@@ -149,9 +170,13 @@ function robotsdottxt($reallink) {
 function gethttpheader($reallink) {
     global $bold, $fgreen, $cln;
     
-    $hdr = get_headers($reallink);
-    foreach ($hdr as $shdr) {
-        echo "\n" . $bold . $fgreen . "[i]" . $cln . "  $shdr";
+    $hdr = @get_headers($reallink);
+    if ($hdr) {
+        foreach ($hdr as $shdr) {
+            echo "\n" . $bold . $fgreen . "[i]" . $cln . "  $shdr";
+        }
+    } else {
+        echo $bold . $red . "Could not retrieve headers" . $cln;
     }
     echo "\n";
 }
@@ -253,7 +278,13 @@ function extractLINKS($reallink) {
     
     $ip = str_replace(["https://", "http://"], "", $reallink);
     $lwwww = str_replace("www.", "", $ip);
-    $elsc = file_get_contents($reallink, false, stream_context_create($arrContextOptions));
+    $elsc = @file_get_contents($reallink, false, stream_context_create($arrContextOptions));
+    
+    if (!$elsc) {
+        echo $bold . $red . "[!] Could not retrieve page content\n" . $cln;
+        return;
+    }
+    
     $eldom = new DOMDocument;
     @$eldom->loadHTML($elsc);
     $elinks = $eldom->getElementsByTagName('a');
@@ -265,12 +296,20 @@ function extractLINKS($reallink) {
     $bv_show_links = trim(fgets(STDIN, 1024));
     
     if (strtolower($bv_show_links) == "y") {
+        $count = 0;
         foreach ($elinks as $elink) {
             $elhref = $elink->getAttribute('href');
-            if (strpos($elhref, $lwwww) !== false || strpos($elhref, 'http') === false) {
-                echo $bold . $fgreen . "[*] " . $cln . $elhref . "\n";
-            } else {
-                echo $bold . $yellow . "[*] " . $cln . $elhref . "\n";
+            if (!empty($elhref)) {
+                if (strpos($elhref, $lwwww) !== false || strpos($elhref, 'http') === false) {
+                    echo $bold . $fgreen . "[*] " . $cln . $elhref . "\n";
+                } else {
+                    echo $bold . $yellow . "[*] " . $cln . $elhref . "\n";
+                }
+                $count++;
+                if ($count >= 50) { // Limit output
+                    echo $bold . $yellow . "[...] Showing first 50 links only\n" . $cln;
+                    break;
+                }
             }
         }
         echo "\n";
@@ -292,11 +331,11 @@ function readcontents($urltoread) {
 function MXlookup($site) {
     global $bold, $cyan, $fgreen, $red, $cln;
     
-    $Mxlkp = dns_get_record($site, DNS_MX);
+    $Mxlkp = @dns_get_record($site, DNS_MX);
     if (!empty($Mxlkp)) {
         $mxrcrd = $Mxlkp[0]['target'];
-        $mxip = gethostbyname($mxrcrd);
-        $mx = gethostbyaddr($mxip);
+        $mxip = @gethostbyname($mxrcrd);
+        $mx = @gethostbyaddr($mxip);
         $mxresult = $bold . $cyan . "IP      :" . $fgreen . " " . $mxip . "\n" . 
                    $bold . $cyan . "HOSTNAME:" . $fgreen . " " . $mx . $cln;
     } else {
@@ -308,8 +347,8 @@ function MXlookup($site) {
 function bv_get_alexa_rank($url) {
     global $cln;
     $xml = @simplexml_load_file("http://data.alexa.com/data?cli=10&url=" . $url);
-    if (isset($xml->SD)) {
-        return $xml->SD->POPULARITY->attributes()->TEXT;
+    if ($xml && isset($xml->SD)) {
+        return (string)$xml->SD->POPULARITY->attributes()->TEXT;
     }
     return "N/A";
 }
@@ -317,14 +356,21 @@ function bv_get_alexa_rank($url) {
 function bv_moz_info($url) {
     global $bold, $red, $fgreen, $lblue, $cln;
     
-    // For HoneyB integration, we'll use a simplified version
-    // In a real implementation, you would use MOZ API keys
+    // Simplified version for HoneyB
     echo $bold . $lblue . "[i] Moz Rank: " . $fgreen . "N/A (API Key Required)\n" . $cln;
     echo $bold . $lblue . "[i] Domain Authority: " . $fgreen . "N/A (API Key Required)\n" . $cln;
     echo $bold . $lblue . "[i] Page Authority: " . $fgreen . "N/A (API Key Required)\n" . $cln;
 }
 
 function advanced_link_crawl($html, $base_url) {
+    if (empty($html)) {
+        return [
+            'internal' => [],
+            'external' => [],
+            'resources' => []
+        ];
+    }
+    
     $dom = new DOMDocument();
     @$dom->loadHTML($html);
     $links = $dom->getElementsByTagName('a');
@@ -338,7 +384,7 @@ function advanced_link_crawl($html, $base_url) {
     
     foreach ($links as $link) {
         $href = $link->getAttribute('href');
-        if (empty($href) || $href == '#') continue;
+        if (empty($href) || $href == '#' || $href == '/') continue;
         
         // Resolve relative URLs
         $absolute_url = resolve_url($href, $base_url);
@@ -367,8 +413,11 @@ function resolve_url($url, $base) {
         return $url;
     }
     
-    // Parse base URL and convert to arrays
+    // Parse base URL
     $base_parts = parse_url($base);
+    if (!$base_parts) {
+        return $url;
+    }
     
     // If relative URL starts with //
     if (strpos($url, '//') === 0) {
@@ -416,13 +465,17 @@ function resolve_path($path) {
     return '/' . implode('/', $result);
 }
 
-// New function for sensitive information scanning
 function sensitive_info_scan($reallink, $protocol, $domain) {
     global $bold, $blue, $green, $red, $yellow, $cln;
     
     echo $bold . $blue . "\n    [SENSITIVE] Scanning for sensitive information...\n" . $cln;
     
     $content = readcontents($reallink);
+    if (empty($content)) {
+        echo $bold . $red . "    [!] Could not retrieve page content\n" . $cln;
+        return;
+    }
+    
     $found_items = [];
     
     // Email addresses
@@ -440,20 +493,15 @@ function sensitive_info_scan($reallink, $protocol, $domain) {
         '/xox[pborsa]-[0-9]{12}-[0-9]{12}-[0-9a-zA-Z]{24}/' => 'Slack Token'
     ];
     
-    // Credit card patterns (for educational purposes only)
-    $cc_patterns = [
-        '/\b4[0-9]{12}(?:[0-9]{3})?\b/' => 'Visa',
-        '/\b5[1-5][0-9]{14}\b/' => 'MasterCard',
-        '/\b3[47][0-9]{13}\b/' => 'American Express',
-        '/\b6(?:011|5[0-9]{2})[0-9]{12}\b/' => 'Discover'
-    ];
-    
     // Scan for emails
     if (!empty($emails)) {
         $found_items['emails'] = $emails;
         echo $bold . $yellow . "    [!] Found " . count($emails) . " email address(es):\n" . $cln;
-        foreach ($emails as $email) {
+        foreach (array_slice($emails, 0, 10) as $email) { // Show first 10 only
             echo "        " . $email . "\n";
+        }
+        if (count($emails) > 10) {
+            echo "        ... and " . (count($emails) - 10) . " more\n";
         }
     }
     
@@ -463,8 +511,8 @@ function sensitive_info_scan($reallink, $protocol, $domain) {
         if (!empty($matches[0])) {
             $found_items[$type] = $matches[0];
             echo $bold . $red . "    [!] Potential " . $type . " found:\n" . $cln;
-            foreach (array_slice($matches[0], 0, 5) as $key) { // Show first 5 only
-                echo "        " . $key . "\n";
+            foreach (array_slice($matches[0], 0, 3) as $key) { // Show first 3 only
+                echo "        " . substr($key, 0, 50) . "...\n";
             }
         }
     }
@@ -517,7 +565,12 @@ function get_page_load_time($url) {
 function check_security_headers($url) {
     global $bold, $green, $yellow, $red, $cln;
     
-    $headers = get_headers($url, 1);
+    $headers = @get_headers($url, 1);
+    if (!$headers) {
+        echo $bold . $red . "    [!] Could not retrieve headers\n" . $cln;
+        return [];
+    }
+    
     $security_headers = [
         'Strict-Transport-Security' => 'HSTS Header',
         'Content-Security-Policy' => 'CSP Header',
@@ -539,5 +592,20 @@ function check_security_headers($url) {
     }
     
     return $found_headers;
+}
+
+// Make sure all required functions exist
+if (!function_exists('readcontents')) {
+    function readcontents($urltoread) {
+        $arrContextOptions = [
+            "ssl" => [
+                "verify_peer" => false,
+                "verify_peer_name" => false,
+            ],
+        ];
+        
+        $filecntns = @file_get_contents($urltoread, false, stream_context_create($arrContextOptions));
+        return $filecntns ?: "";
+    }
 }
 ?>
